@@ -6,5 +6,6 @@ MAP:
 /MRP: main location for scripts and outputs.  
 > /Calibrated: calibrated MRP testing (Marble et al.).  
 > /District Level: district level mapping.  
-> /State Level: state level mapping (including Gallup time series, cross institution, and public schools).  
+> /State Level: state level mapping (including Gallup time series, cross institution, and public schools).
+
 /Output: other project output (crosswalks etc.).  
