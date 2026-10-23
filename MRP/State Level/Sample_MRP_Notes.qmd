@@ -1,0 +1,114 @@
+---
+title: "Notes from Sample MRP on Rivers Data"
+format: html
+---
+
+My census API key: b089d8540d85e3444422655ec2879ecabddbafb6
+
+MRP basics:
+- Take in survey data 
+- Multilevel regression: Run regression predicting outcome based on binned geographic+ demographic characteristics (forming "cells" of specific permutations of said info). Random effects enable partial pooling to draw on info of related cells
+- Postratification: use ACS data to model amount of that cell in a given geographic area, producing a (hopefully accurate) mapping
+
+Notes:
+- Use tidycensus PUMS (microdata) for state-level
+- Use tidycensus microdata packages to get at least zctas/potentially school districts for mrp
+- Remember variable names must match exactly between postrat frame and input data
+- Shiro data built for CCES. Need to build similar pipelines, general idea is get data to match, then run it through models. Plenty of models on the MRP end, just need to pick best one for purposes
+
+Questions:
+- Should I use non-demographic covariates, which are present in the Rivers surveys? What are important covariates like partisanship that I should generally be looking at in education data? Even things like how much you pay attention to politics or how civic minded you are if i recall correctly
+
+- I collapsed trust into binary (high was "A great deal" + "Quite a lot", low was "Some" + "Very little"). Would you prefer ordinal or a different cutpoint?
+
+- I used 6 race/ethnicity categories (including "Two or More" which had a good number of respondents). I know standard is 5. Worth the added sparsity for representation?
+
+- Current model uses all random effects. Should I consider fixed effects for strong predictors like education, and if so for what?
+
+- Model had 43 divergent transitions. Is that acceptable for exploratory work, or should I work on refining? If so, do you have recommendations?
+
+- How would you recommend I be checking/validating these estimates?
+
+- What other institutional trust metrics or other things should looking at? I started with public schools, but also universities, media, etc.
+
+Want to incorporate:
+- Non-demographic predictors
+- School districts. Not sure how to set these up. Tables exist in ACS at the district level for some of the variables, but not together and not distributionally.
+
+TODO: 
+- Validate against scatter plot of institutional trust by state
+- Generate for all other institutions
+- Try to put in politics covariate for a version of each mrp. ACS doesn't have this
+
+- Maybe pool gallup data by decade
+- ACS school district data
+
+
+
+For old gallup data:
+- 90s + 00s question looks the same
+
+
+Model assumptions at baseline:
+- Demographic population totals are taken from ACS.
+- Ignores pid. 
+
+
+Model assumptions for PID:
+- Sample is approximately representative within demo × state cells
+  after conditioning on PID.
+- Demographic population totals are taken from ACS.
+- Partisan composition is modeled, not poststratified.
+- Clearly not true---significant effects from partisanship but unevenly distributed. Needs a synthjoint
+- Most geographic variation explained by demographics rather than partisanship
+- Added z score for trump vote at the state level to do some heavy lifting. Helps guide state effects of PID
+
+Model assumptions for PID + synthjoint:
+- Synthjoint accurately reflects joint distributions
+
+# Synthetic Joint: Smoothfix vs Bmlogit
+## Methodological difference:
+- Smoothfix (iterative proportional fitting): Takes ACS demographic frame, rakes uniformly to hit CCES partisan marginals by state. Assumes demographic × partisan independence within raking.
+- Bmlogit (multinomial with balancing constraints): Fits multinomial model on survey data to learn demographic to partisan relationships, then reweights to hit CCES marginals. Preserves survey covariance structure.
+
+## Results
+- Cell-level correlation: r = 0.992
+- State partisan marginal correlation with CCES: ~0.978 (bmlogit)
+- Either is basically fine!
+
+- Income essentially irrelevant
+
+Additional data used:
+CCES (https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi%3A10.7910/DVN/II2DB6)
+FEC (https://www.fec.gov/introduction-campaign-finance/election-results-and-voting-information/)
+
+
+Hartney meeting (12/29):
+- As we go back, how do we think about partisanship? 
+- Interpretation. Answering it differently concieving differently of public education.
+- Pool it across waves. Partisanship does a lot of the work.
+- Can create state estimates with 2000 people. Setting aside 2024, want to tease out changes over time. Can we uncover something useful to building a panel doing every year versus pooling two or 3 years?
+- How do people interpolate ACS? Or do they interpolate? 
+- Methodological learning. Any papers on panels from MRP. 
+- CCES first year is 2006. Before that? Annenburg national election study
+
+
+- Look at lines over time:
+- Pre and post Hurricane Katrina LA
+- Education reforms in DC
+
+- Other institutions
+- Time series
+- School district level
+
+- Fine to use binary
+
+
+# Notes for time series
+- Dynamic MRP vs. Pacheco method
+
+- For cross-institutions, want to determine if there's something substantively different about how public school trust functions
+
+- Finding dynamic ways to build metrics at a school district level from small n
+
+trump_z and mrp

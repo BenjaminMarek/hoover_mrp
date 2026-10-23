@@ -1,0 +1,627 @@
+---
+title: "Draft of Overall Report on MRP Estimates"
+format: html
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r initial-setup}
+library(here)
+library(tidycensus)
+library(tidyverse)
+library(ccesMRPprep)
+library(ccesMRPrun)
+library(brms)
+library(cmdstanr)
+library(synthjoint)
+library(scales)
+library(furrr)
+library(readxl)
+library(haven)
+library(educationdata)
+library(usmap)
+library(ordinal)
+
+state_names <- fips_codes |>
+  transmute(STATE = state_code, state_name = state) |>
+  distinct()
+```
+
+## Introduction
+This project seeks to use multilevel regression and poststratification (MRP) to produce trust estimates for public schools at the state and school district level. It consists of a 2024 cross-section estimating state-level trust and comparing public schools to seven other American institutions, a time series tracing state-level trust from 1973 to 2025 using Gallup data, and an exploratory extension of the 2024 data to approximately 13k school districts.
+
+## Data
+###### Survey Data
+The primary survey data for the 2024 cross-section and institutional comparisons comes from YouGov baselines in three waves taken in March, October, and November of 2024. After cleaning and deduplicating repeated respondents, the pooled sample contains approximately 100k respondents with valid responses to the institutional trust questions. The trust question asks respondents how much confidence they have in several institutions with responses on a four-point scale: "a great deal," "quite a lot," "some," and "very little." Responses are collapsed to a binary of high trust ("a great deal" or "quite a lot") versus low trust ("some" or "very little"). An ordinal robustness check is reported in the appendix.
+The time series analysis uses Gallup's Confidence in Institutions survey, which has asked the same trust question annually from 1973 to 2025. Gallup surveys approximately 1,000 adults nationally per year, yielding roughly 51k usable observations across the full period. It also includes a "none" option for confidence, folded into low. 
+
+###### Census Data
+Poststratification frames for the 2024 cross-section are constructed from the ACS 2023 5-year PUMS accessed via the tidycensus package. Respondents are classified into cells defined by state, age (4 groups), education (4 groups), race/ethnicity (5 groups), and sex (2 categories). Group quarters residents are excluded.
+For the time series, poststratification frames are built from IPUMS Census PUMS (1980, 1990, 2000) and ACS 5-year PUMS (2005-2009, 2014-2018, 2020-2024), each mapped to the period whose midpoint it best approximates. Race is coded as White/Black/Other throughout to maintain consistent cells across the full time series, since Gallup did not include a Hispanic ethnicity identifier before 1993.
+District-level demographic tables for the district extension are drawn from ACS 5-year estimates via the Census Bureau's TIGRIS interface, covering age/sex, education, and race/ethnicity at the school district level.
+
+###### Party ID Data
+Because the ACS does not measure party identification, the joint distribution of demographics and partisanship in the poststratification frame is estimated using a synthetic joint distribution. State-level partisan marginals are drawn from CCES pooled across 2021-2024 and weighted. 
+
+###### Election Data
+Presidential election results for 1976-2020 are drawn from the MIT Election Data and Science Lab (MEDSL). Results for 2024 are from the Federal Election Commission. For the time series, vote shares are averaged across the presidential elections falling within each period and z-scored within period. District-level partisan composition (Democratic vote plurality) is drawn from school district-level vote shares.
+
+###### District-Level Covariates
+District-level covariates for the district extension are Democratic vote plurality, per-pupil expenditure, enrollment, and child poverty rate. Democratic vote plurality is drawn from school district-level presidential vote shares for 2024, falling back to 2020 where 2024 data is unavailable. Per-pupil current expenditure is from the NCES School District Finance Survey (F-33) for 2021-22, log-transformed. Enrollment is from the CCD directory for 2022, also log-transformed. Child poverty rate is from the Census Bureau's Small Area Income and Poverty Estimates (SAIPE) for 2021. All continuous covariates are z-scored. District-level data are accessed via the Urban Institute's educationdata package. Note the covariates span 2021-2024, so there is a modest timing mismatch with the 2024 survey data.
+
+
+## 2024 Cross-Section
+
+```{r cross-setup}
+fit_pubsch <- here("Final", "Cross", "2024_pooled_pubsch_mr_revised.rds") |> readRDS()
+mrp_pubsch <- here("Final", "Cross", "mrp_pooled_pubsch_revised.rds") |> readRDS()
+yougov_df <- here("Final", "Cross", "yougov_cleaner_synth.rds") |> readRDS()
+```
+
+State-level estimates of trust in public schools using MRP from 2024. 
+
+### Data
+Respondents are classified into demographic cells defined by 4 age groups (under 30, 30 to 44, 45 to 64, 65+), 4 education levels (high school or less, some college, college graduate, postgraduate), 5 racial/ethnic categories (White, Black, Hispanic, Asian, Other), sex (man, woman), and 3 party identification categories (Democrat, Independent, Republican). Because the ACS does not measure partisanship, the joint distribution of demographics and party identification is estimated using a synthetic joint distribution (smoothfix), which rakes the ACS cells to match CCES partisan shares within each state. An alternative method (bmlogit) modelling the relationship produced nearly identical results (r > 0.99 at both the cell and final estimate level).
+
+### Model
+The multilevel model is a Bayesian logistic regression estimated with brms fitted on unweighted likelihood. Representativeness is handled by the poststratification frame, following standard MRP practice. The following formula was used:
+```{r cross-formula}
+#| eval: false
+#| echo: true
+
+trust_schools_binary ~ sex_mrp + pid3_mrp + (1|age_mrp) + (1|educ_mrp) + (1|race_mrp) + (1|STATE) + (1 | STATE:educ_mrp) + (1 | STATE:race_mrp) + (1 | STATE:pid3_mrp) + pid3_mrp:trump_z + trump_z
+```
+
+Full brms output in the appendix.
+
+```{r model-results}
+fixef(fit_pubsch)
+VarCorr(fit_pubsch)
+```
+
+Party identification has the largest individual-level effects. Relative to Democrats, Independents are about 1 log-odds point lower (coefficient = -1.00, 95% CI: -1.08 to -0.93) and Republicans about 1.5 points lower (coefficient = -1.49, 95% CI: -1.56 to -1.41). Education (SD = 0.37), race (SD = 0.30), and age (SD = 0.26) contribute lesser variation through their random intercepts. The overall state intercept is small (SD = 0.12) but the STATE:pid3_mrp interaction (SD = 0.16) indicates that the size of the partisan gap varies meaningfully across states. The STATE:educ_mrp and STATE:race_mrp interactions are smaller (SD = 0.04 and 0.09 respectively), suggesting that education and racial patterns in trust are fairly consistent geographically.
+
+Among the fixed effects, women are somewhat less likely to trust public schools than men after controlling for partisanship (coefficient = -0.18, 95% CI: -0.21 to -0.15). The trump_z coefficient is near zero (0.07, 95% CI: -0.07 to 0.21), and neither interaction between trump_z and party identification is statistically distinguishable from zero. The state-level partisan context of a state does not appear to shape trust in public schools beyond what individual party identification and the state random intercepts already capture. The state-level variation which does exist likely reflects state-level factors not reducible to a partisan gradient. A model comparison (Appendix F) confirms this: dropping trump_z changes estimates by less than 1 percentage point.
+
+### Estimates
+
+State estimates range from 27.4% in Louisiana to 44.4% in the District of Columbia, a spread of 17 percentage points. A full state table and map are below.
+
+```{r Table}
+state_table <- mrp_pubsch |>
+  left_join(
+    tidycensus::fips_codes |>
+      transmute(STATE = state_code, state_name = state) |>
+      distinct(),
+    by = "STATE"
+  ) |>
+  arrange(desc(p_mrp_est)) |>
+  transmute(
+    State = state_name,
+    `MRP Estimate` = percent(p_mrp_est, accuracy = 0.1),
+    `95% CI` = paste0(percent(p_mrp_050, accuracy = 0.1), " – ", percent(p_mrp_950, accuracy = 0.1))
+  )
+
+state_table |> print (n = 100)
+```
+
+```{r Map}
+mrp_pubsch |>
+  rename(fips = STATE) |>
+  plot_usmap(data = _, values = "p_mrp_est", regions = "states") +
+  scale_fill_gradient2(
+    low = "#b2182b", mid = "#f7f7f7", high = "#2166ac",
+    midpoint = median(mrp_pubsch$p_mrp_est),
+    name = "Trust"
+  )
+```
+
+### Internal Consistency
+To assess the estimates, I compared the MRP values to unweighted state-level survey means. The correlation between MRP estimates and unweighted survey means is r = 0.92. MRP-survey discrepancy is weakly negatively correlated with state sample size (r = -0.11), consistent with mild shrinkage in small states.
+
+```{r Validation}
+unweighted_means <- yougov_df |>
+  summarise(
+    unweighted_trust = mean(trust_schools_binary, na.rm = TRUE),
+    n = n(),
+    .by = STATE
+  )
+
+validation <- mrp_pubsch |>
+  left_join(unweighted_means, by = "STATE") |>
+  filter(!is.na(unweighted_trust))
+
+r_val <- cor(validation$p_mrp_est, validation$unweighted_trust, use = "complete.obs")
+
+ggplot(validation, aes(x = unweighted_trust, y = p_mrp_est)) +
+  geom_point(aes(size = n), alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey50") +
+  geom_smooth(method = "lm", se = FALSE, color = "steelblue") +
+  annotate("text",
+    x = min(validation$unweighted_trust, na.rm = TRUE),
+    y = max(validation$p_mrp_est, na.rm = TRUE),
+    label = paste0("r = ", round(r_val, 3)),
+    hjust = 0, size = 5
+  ) +
+  scale_size_continuous(name = "Respondents", range = c(1, 5)) +
+  labs(
+    x = "Survey Mean (Unweighted)",
+    y = "MRP Estimate",
+    title = "MRP Estimates vs. Survey Means"
+  ) +
+  theme_minimal()
+
+shrinkage_r <- cor(validation$n, abs(validation$p_mrp_est - validation$unweighted_trust))
+```
+
+## Institutional Comparison
+```{r comp-setup}
+mrp_estimates <- here("Final", "Comparisons", "mrp_estimates_all.rds") |> readRDS()
+summary_stats <- here("Final", "Comparisons", "summary_stats.rds") |> readRDS()
+coef_data <- here("Final", "Comparisons", "coef_data.rds") |> readRDS()
+state_variance <- here("Final", "Comparisons", "state_variance.rds") |> readRDS()
+cor_matrix <- here("Final", "Comparisons", "cor_matrix.rds") |> readRDS()
+trump_cors <- here("Final", "Comparisons", "trump_cors.rds") |> readRDS()
+demographic_ranges <- here("Final", "Comparisons", "demographic_ranges.rds") |> readRDS()
+```
+
+Comparison of state-level trust in public schools using MRP from 2024 to trust in seven other American institutions: Congress, the media, the military, police, religious leaders, the Supreme Court, and universities. 
+
+### Data
+The same YouGov pooled sample and poststratification frame are used for all eight institutions. Sample sizes vary across institutions (from approximately 73k for universities to 153k for media) because YouGov administered the trust questions for different institutions to different subsets of respondents. Because cell-level support varies across institutions, partial pooling is more aggressive for institutions with smaller samples (notably universities at 73k), which contributes to wider posterior intervals on state random effects.
+
+### Model
+All eight models were run with a common specification, which is simpler than the cross-sectional schools specification for compute reasons.
+
+```{r comp-formula}
+#| eval: false
+#| echo: true
+
+trust_institution ~  sex_mrp + pid3_mrp +  (1|age_mrp) + (1|educ_mrp) + (1|race_mrp) + (1|STATE) + (1 | STATE:educ_mrp) + (1 | STATE:race_mrp) + trump_z
+```
+
+Full brms output in the appendix.
+
+### Results
+#### Summary Stats
+```{r summary}
+summary_stats
+```
+
+The military leads in overall trust (63%), while Congress and the media sit at the bottom (18% and 19%). Schools are in the middle of the distribution at 35%, nearly identical to universities (37%) and the Supreme Court (35%). The spread of state-level estimates varies considerably across institutions, with the police and Supreme Court having particularly wide ranges (roughly 30 percentage points from lowest to highest state).
+
+#### Coefficients
+```{r coefficients}
+ggplot(coef_data, aes(x = pid_rep, y = trump_z, label = institution)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_errorbar(aes(ymin = trump_z_lower, ymax = trump_z_upper), width = 0, alpha = 0.4) +
+  geom_errorbarh(aes(xmin = pid_rep_lower, xmax = pid_rep_upper), height = 0, alpha = 0.4) +
+  geom_point(size = 2) +
+  geom_text(vjust = -1, size = 3) +
+  labs(
+    x = "Individual Partisan Effect (Democrat vs. Republican)",
+    y = "State Contextual Effect",
+    title = "Individual vs Contextual Partisan Effects"
+  ) +
+  theme_minimal()
+```
+
+The coefficient plot reveals a clear two-cluster structure. Universities, media, and schools all have large negative Republican coefficients, meaning Republicans are substantially less trusting than Democrats. On the other side, the Supreme Court, police, religious leaders, and the military all have positive Republican coefficients. Congress sits near zero on the individual partisan dimension (everyone hates it equally).
+
+The vertical dimension shows whether the political context of a state adds anything beyond individual partisanship. Most institutions cluster near zero on this axis. Religious leaders, the military, and the Supreme Court show modest positive contextual effects, meaning that living in a more Republican state is associated with somewhat higher trust in these institutions even after accounting for individual party identification. Schools are essentially at zero on this dimension, consistent with the finding from the cross-section that state-level partisan context has little additional predictive power for school trust.
+
+#### Trust Correlation w/ 2024 Voting Pattern
+```{r trump-corr}
+trump_cors
+```
+
+The state-level correlation between MRP trust estimates and the state's Trump vote share confirms this pattern. Universities (-0.92) and media (-0.88) show near-perfect alignment with state partisanship, meaning the map of trust in universities is essentially a presidential election map. Schools are negatively correlated with Trump vote share (-0.58), but considerably less so. Among institutions in the Republican-coded cluster, SCOTUS (0.91) and military (0.90) show the tightest alignment. Congress is essentially uncorrelated with state partisanship (-0.02). Note that because trump_z enters the model as a predictor, these correlations do include a mechanical component, but I believe the relative ordering across institutions should hold. The trump_z coefficient is statistically indistinguishable from zero for five of eight institutions (including universities and media which show the strongest partisan correlations).
+
+#### Residuals
+```{r Residuals}
+ggplot(state_variance, aes(x = reorder(institution, sd_state), y = sd_state)) +
+  geom_pointrange(aes(ymin = sd_state_lower, ymax = sd_state_upper)) +
+  coord_flip() +
+  labs(
+    x = NULL,
+    y = "Residual State SD",
+    title = "Unexplained State-Level Variation by Institution"
+  ) +
+  theme_minimal()
+```
+
+After accounting for demographics, individual partisanship, and state partisan context, schools are clustered with religious leaders and congress towards a higher level of unexplained state-level variance. Most other institutions cluster between 0.02 and 0.08 on this measure. School trust varies across states in ways that the standard demographic and partisan predictors do not explain. Note that this is conditioned on this model specification, and should not be compared to the cross-sectional model for schools earlier.
+
+#### Demographic Patterns
+```{r Demographics}
+demographic_ranges
+```
+
+These comparisons should be treated with caution, since different base rates make the comparisons between institutions on a log-odds scale not straightforward, and also because the ranges are estimated from independent models. That being said, two potential  patterns stand out. First, schools and universities share a notably larger education gradient than any other institution (0.53 and 0.82 log-odds range, compared to below 0.20 for every other institution). More educated respondents are substantially more likely to trust schools and universities, which does not seem to hold for the military, police, religious leaders, the Supreme Court, or Congress.
+Second, schools have the flattest age gradient of any institution (0.37, compared to 1.25 for Congress, 0.97 for military, and 0.93 for police). This is potentially surprising given that younger adults are more likely to have school-aged children, though the analysis does not include parental status, which could be masking a sharper distinction along that dimension.
+
+
+## Gallup Time Series
+```{r ts-setup}
+mrp_base_estimates <- here("Final", "Time", "mrp_base_estimates.rds") |> readRDS()
+mrp_rv_estimates <- here("Final", "Time", "mrp_rv_estimates.rds") |> readRDS()
+rolling_cor <- here("Final", "Time", "rolling_cor.rds") |> readRDS()
+period_cor <- here("Final", "Time", "period_cor.rds") |> readRDS()
+variance_results <- here("Final", "Time", "variance_results.rds") |> readRDS()
+gallup_clean_df <- here("Final", "Time", "gallup_clean_df.rds") |> readRDS()
+```
+
+
+### Data
+Because Gallup's annual samples are far too small for state-level estimation in any single year (~20 respondents per state on average), observations are pooled into six roughly decade-long periods aligned to major education policy eras: 
+- 1973-1982 (pre-Nation at Risk)
+- 1983-1991 (post-Nation at Risk reform)
+- 1992-2001 (pre-NCLB)
+- 2002-2009 (NCLB) 
+- 2010-2019 (Common Core and Race to the Top)
+- 2020-2025 (post-Covid)
+An alternative approach using rolling 10-year windows is used for the correlation time series, which smooths out the boundaries between fixed periods, similar to Pacheco (2011).
+
+Race is coded as White/Black/Other throughout to maintain consistent poststratification cells. Gallup did not include a Hispanic ethnicity identifier before 1993, so pre-1993 Hispanic respondents are coded by self-reported race. A robustness check grouping post-1993 Hispanics as White produced MRP estimate correlations above 0.93 for all periods with maximum point shifts under 3 percentage points. Gallup's education variable does not distinguish postgraduates from college graduates, so three categories are used throughout the time series. The age bins are also slightly different than YouGov's, the second spanning 30-49 rather than 30-44. Poststratification frames are built from IPUMS Census PUMS (1980, 1990, 2000) and ACS 5-year PUMS (2005-2009, 2014-2018, 2020-2024), each mapped to the period whose midpoint it best approximates. 
+
+### Models
+Each period is estimated separately using a multilevel logistic regression via glmer:
+```{r ts-formula}
+#| eval: false
+#| echo: true
+
+trust_binary ~ sex_mrp + age_mrp + educ_mrp + race_mrp + (1 | STATE)
+```
+
+A second specification adds state-level Republican presidential vote share (z-scored within each period) as a predictor. Republican vote share is averaged across the presidential elections falling within each period: 
+- 1976 and 1980 for 1973-1982
+- 1984 and 1988 for 1983-1991 
+- 1992, 1996, and 2000 for 1992-2001 
+- 2004 and 2008 for 2002-2009
+- 2012 and 2016 for 2010-2019 
+- 2020 and 2024 for 2020-2025
+Election data are drawn from the MIT Election Data + Science Lab for 1976-2020 and FEC results for 2024. The two specifications produce nearly identical estimates (correlations above 0.89 in all periods), and the version with the partisan covariate is used for maps and state-level displays. All correlations with partisan variables use the baseline model without the partisan covariate. For the rolling correlation, elections within two years of the window boundaries are averaged.
+
+### Results
+
+#### National Trend Line
+```{r trendline}
+gallup_clean_df |>
+  mutate(wtfctr = as.numeric(wtfctr)) |>
+  reframe(
+    trust = c(
+      weighted.mean(trust_binary, wtfctr, na.rm = TRUE),
+      weighted.mean(trust_binary[pid3_mrp == "Democrat"], wtfctr[pid3_mrp == "Democrat"], na.rm = TRUE),
+      weighted.mean(trust_binary[pid3_mrp == "Republican"], wtfctr[pid3_mrp == "Republican"], na.rm = TRUE)
+    ),
+    group = c("Overall", "Democrat", "Republican"),
+    .by = year_mrp
+  ) |>
+  mutate(group = factor(group, levels = c("Overall", "Democrat", "Republican"))) |>
+  ggplot(aes(year_mrp, trust, color = group)) +
+  geom_point(alpha = 0.3, size = 1.5) +
+  geom_smooth(method = "loess", span = 0.4, se = FALSE, linewidth = 1) +
+  scale_color_manual(values = c("Overall" = "black", "Democrat" = "blue",
+                                 "Republican" = "red")) +
+  scale_y_continuous(labels = scales::percent, limits = c(0, 0.7)) +
+  labs(x = NULL, y = "Trust in Public Schools", color = NULL,
+       title = "National Trust in Public Schools") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+Trust in public schools has declined substantially over the past five decades, from roughly 60% reporting high trust in the mid-1970s to around 30% today. The decline is not uniform across parties. Democratic trust has remained comparatively stable, fluctuating between 40% and 50% across the period. Republican trust has collapsed, falling from roughly 60% in the 1970s to below 20% by 2025. The overall trend is primarily driven by this Republican decline, with the sharpest drop beginning around 2010.
+
+
+#### Period Map
+```{r period-map}
+plot_usmap(data = mrp_rv_estimates |> rename(fips = STATE),
+           values = "mrp_estimate", regions = "states") +
+  scale_fill_gradient2(
+    low = "#b2182b", mid = "#f7f7f7", high = "#2166ac",
+    midpoint = 0.4, limits = c(0.2, 0.7),
+    name = "Trust") +
+  facet_wrap(~period_mrp, nrow = 2) +
+  labs(title = "Trust Estimates") +
+  theme(legend.position = "bottom",
+        strip.text = element_text(size = 12))
+```
+
+The maps show two patterns simultaneously. First, the overall decline, with almost every state shifting from blue (high trust) toward red (low trust) across the six periods. Second, a geographic resorting. In the earliest period, trust is highest in the Mountain West and upper Midwest and relatively uniform across the country. By 2020-2025, the geography has reorganized along partisan lines, with the highest trust in the Northeast and Pacific coast.
+
+#### Rank Map
+```{r rank-map}
+mrp_rv_estimates |>
+  filter(period_mrp %in% c("1973-1982", "2020-2025")) |>
+  group_by(period_mrp) |>
+  mutate(mrp_rank = rank(mrp_estimate) / n()) |>
+  rename(fips = STATE) |>
+  plot_usmap(data = _, values = "mrp_rank", regions = "states") +
+  scale_fill_gradient2(low = "#b2182b", mid = "#f7f7f7", high = "#2166ac",
+                       midpoint = 0.5, name = "Rank",
+                       breaks = c(0.1, 0.5, 0.9),
+                       labels = c("50th", "", "1st")) +
+  facet_wrap(~period_mrp) +
+  theme(legend.position = "bottom")
+```
+
+The rank map makes the resorting more visible by removing the overall decline and showing only each state's relative position within its period. In 1973-1982, the spatial pattern is largely unstructured. By 2020-2025, it closely resembles a presidential election map, with blue states ranking highest and red states lowest.
+
+#### Period Correlations
+```{r period-cor}
+period_cor
+```
+
+The state-level correlation between MRP trust estimates and contemporaneous Republican vote share shifts from positive in earlier periods to clearly negative in the most recent. Three of the six period correlations exclude zero in their bootstrap confidence intervals: 1983-1991 (r = 0.37, [0.07, 0.58]), 2002-2009 (r = 0.34, [0.10, 0.52]), and 2020-2025 (r = -0.45, [-0.64, -0.25]). The 1973-1982 estimate (r = 0.29) has a lower bound essentially at zero, and the 1992-2001 (r = 0.18) and 2010-2019 (r = -0.18) windows both straddle zero. These bootstrap intervals were constructed by resampling states and reflect uncertainty from the number of states, not estimation uncertainty in the MRP estimates themselves.
+The sign-flip itself seems robust but not the magnitude of any individual period. The trajectory from positive correlations in the 1970s-80s to a clearly negative correlation by the 2020s is supported by both the fixed-period and rolling-window estimates, and is consistent with the emergence of the large individual-level partisan gap visible in the national trend line. The magnitudes of the early positive correlations should be interpreted with more caution than the 2020-2025 endpoint, given smaller samples and greater estimation uncertainty in the earliest periods.
+
+#### Rolling Correlation
+```{r rolling-cor}
+ggplot(rolling_cor, aes(midpoint, cor_est)) +
+  geom_ribbon(aes(ymin = cor_lo, ymax = cor_hi), alpha = 0.2) +
+  geom_line() +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(x = "Window midpoint", y = "r",
+       title = "Correlation of state-level trust × Republican vote share") +
+  theme_minimal()
+```
+
+The rolling window analysis dates the crossover more precisely. The correlation is stable and moderately positive for three decades, then collapses sharply beginning around 2008-2010, crossing zero at approximately 2013-2014.
+
+
+#### Variance Decomposition
+```{r var-decomp}
+variance_results
+```
+
+A separate analysis compares the state-level variance explained by models with and without individual-level party identification. In the first three periods (1973-2001), adding partisanship to the model absorbs essentially zero state-level variance. Starting in 2010-2019, party identification explains 13.7% of state-level variance, rising to 22.7% by 2020-2025. This suggests that partisanship became a meaningful source of geographic variation in school trust only in the last fifteen years, with state-level differences being driven by different factors prior. Note that overall state-level variance also declines across the period, so the rising PID share reflects both an absolute increase in the variance attributable to partisanship and a decline in other state-level sources of variation. The relative claim, that partisanship became a meaningful source of geographic variation only in the last fifteen years, is supported either way.
+
+## District-level Extension
+An exploratory district-level MRP model is estimated using the YouGov survey with respondents matched to their school districts. The model includes the same individual-level predictors and state-level structure as the cross-sectional model, plus a district random intercept and district-level covariates for Democratic vote plurality, child poverty rate, log enrollment, and log per-pupil expenditure. The estimates carry no uncertainty intervals due to computation constraints for Bayesian modeling.
+
+```{r dist-setup}
+dist_trust_map <- here("Final", "District", "trust_map.rds") |> readRDS()
+
+dist_trust_map
+```
+
+Partisan composition is the dominant correlate of district-level trust but does not fully account for it. The geographic pattern is broadly consistent with the state-level results, with higher estimated trust in the Northeast and upper Midwest and lower trust across the South and Mountain West. Within states, variation tracks both the partisan composition and socioeconomic characteristics of districts. When aggregated back to states, these estimates correlate at r = 0.89 with the direct state-level MRP. These estimates should be treated as exploratory.
+
+## Conclusion
+Trust in public schools has declined substantially over the past five decades, driven primarily by a collapse in Republican trust that has geographically resorted the map of school confidence along partisan lines. Among American institutions, schools occupy a distinctive position, being individually partisan like universities and media, but (at the state level) less geographically polarized. A district-level extension may potentially be feasible.
+
+## Limitations
+General:
+- No parental status included in any pipeline. The flat age gradient for schools could be masking a parent/non-parent divide.
+- All scales collapsed to binary. An ordinal robustness check (appendix) confirms stable state rankings (Spearman r = 0.92).
+- Income not included due to modest relative effect to education and partisanship, but its exclusion could affect specific subgroup estimates.
+- Synthetic joint distribution: The two methods tested agree, but are not the same as external validation of the partisan marginals.
+- YouGov is an opt-in panel, not a probability sample. MRP mitigates due to breaking down to demographic cells but cannot eliminate selection biases not captured by the model's predictors.
+
+Time series:
+- Small sample size of ~1k/year nationally requires decade-long pooling, which assumes within-period stability. Weakest for 2010-2019, which spans the Common Core backlash and early Trump era.
+- Gallup only introduced a Hispanic identifier in 1993. Robustness check confirms minimal impact (r > 0.93, max shift under 3pp).
+- The time series models do not include interaction terms, due to Gallup data sparsity.
+- No uncertainty propagation: MRP point estimates are treated as fixed in the time series correlations and variance decomposition.
+
+Cross institution:
+- Cross-institutional comparisons of demographic effect magnitudes are descriptive, rather than formally tested..
+
+District level:
+- Inclusion of state-level random effects leads to somewhat discrete state boundaries 
+- No uncertainties included due to computational constraints
+
+## Methodological Sources
+All analyses use MRP, which combines individual-level survey responses with Census population counts to produce subnational estimates that are more reliable than simple survey disaggregation. The general framework follows Park, Gelman, and Bafumi (2004) and Lax and Phillips (2009, 2012). The MRP workflow is adapted from Kuriwaki's ccesMRPrun and ccesMRPprep packages. Synthetic joint distributions for incorporating partisanship into ACS poststratification frames use Kuriwaki's synthjoint package. The rolling-window approach to the time series follows Pacheco (2011). 
+
+## Appendix
+
+### A: Full Model Output (Cross-Section)
+```{r app-cross-full}
+summary(fit_pubsch)
+```
+
+A specification with party identification as a random rather than fixed effect produced nearly identical coefficients and state-level estimates.
+
+### B: Full Model Output (Institutional Comparisons)
+```{r}
+fit_congress <- here("Final", "Comparisons", "Appendix", "2024_pooled_congress_mr.rds") |> 
+  readRDS()
+fit_media <- here("Final", "Comparisons", "Appendix", "2024_pooled_media_mr.rds") |> 
+  readRDS()
+fit_military <- here("Final", "Comparisons", "Appendix", "2024_pooled_military_mr.rds") |> 
+  readRDS()
+fit_police <- here("Final", "Comparisons", "Appendix", "2024_pooled_police_mr.rds") |> 
+  readRDS()
+fit_religious <- here("Final", "Comparisons", "Appendix", "2024_pooled_religious_leaders_mr.rds") |> 
+  readRDS()
+fit_scotus <- here("Final", "Comparisons", "Appendix", "2024_pooled_scotus_mr.rds") |> 
+  readRDS()
+fit_universities <- here("Final", "Comparisons", "Appendix", "2024_pooled_unis_mr.rds") |> 
+  readRDS()
+fit_schools <- here("Final", "Comparisons", "Appendix", "2024_pooled_pubsch_mr.rds") |> 
+  readRDS()
+
+summary(fit_congress)
+summary(fit_media)
+summary(fit_military)
+summary(fit_police)
+summary(fit_religious)
+summary(fit_scotus)
+summary(fit_universities)
+summary(fit_schools)
+```
+
+### C: Correlation Heatmap (Institutional Comparisons)
+```{r app-heatmap}
+cor_matrix |>
+  as_tibble(rownames = "inst1") |>
+  pivot_longer(-inst1, names_to = "inst2", values_to = "r") |>
+  ggplot(aes(x = inst1, y = inst2, fill = r)) +
+  geom_tile() +
+  geom_text(aes(label = round(r, 2)), size = 3) +
+  scale_fill_gradient2(low = "steelblue", mid = "white", high = "firebrick",
+                       midpoint = 0, limits = c(-1, 1)) +
+  labs(x = NULL, y = NULL, fill = "r",
+       title = "State-Level Trust Correlations Across Institutions") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+### D: State Trajectories (Gallup TS)
+```{r app-spaghetti}
+mrp_rv_estimates |>
+  left_join(fips_codes |>
+              transmute(STATE = state_code, state_name = state) |>
+              distinct(),
+            by = "STATE") |>
+  mutate(
+    midpoint = recode(period_mrp,
+      "1973-1982" = 1977.5, "1983-1991" = 1987, "1992-2001" = 1996.5,
+      "2002-2009" = 2005.5, "2010-2019" = 2014.5, "2020-2025" = 2022.5),
+    highlight = state_name %in% c("Massachusetts", "Texas", "Iowa",
+                                   "Mississippi", "California", "West Virginia")
+  ) |>
+  ggplot(aes(midpoint, mrp_estimate, group = state_name)) +
+  geom_line(data = \(d) filter(d, !highlight), color = "grey80", linewidth = 0.3) +
+  geom_line(data = \(d) filter(d, highlight), aes(color = state_name), linewidth = 0.8) +
+  geom_point(data = \(d) filter(d, highlight), aes(color = state_name), size = 1.5) +
+  geom_line(
+    data = \(d) summarise(d, mrp_estimate = mean(mrp_estimate), .by = midpoint),
+    aes(group = 1), color = "black", linewidth = 1, linetype = "dashed"
+  ) +
+  labs(x = NULL, y = "trust", color = NULL,
+       title = "State-Level Trust in Public Schools Over Time") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+### E: Ordinal Robustness Check
+The main analysis collapses the four-point trust scale to a binary: "a great deal" and "quite a lot" versus "some" and "very little," in line the standard Gallup reporting. This section confirms that the geographic and partisan patterns in the YouGov data are not artifacts of where the cutpoint falls.
+
+First, state-level means are computed under all three possible binary cutpoints. That is, with only "a great deal" as high trust, with "a great deal" or "quite a lot," the main specification, and with everything except "very little." The rank correlations across states are:
+```{r}
+fit_ordinal <- here("Final", "Cross", "Appendix", "ordinal_conf.rds") |> 
+  readRDS()
+
+# Cutpoint sensitivity (raw state means across 3 binary splits)
+yougov_df |>
+  mutate(
+    cut_top1 = as.integer(institutional_trust_public_schools == "A great deal"),
+    cut_top3 = as.integer(institutional_trust_public_schools != "Very little")
+  ) |>
+  summarise(
+    mean_top1 = mean(cut_top1, na.rm = TRUE),
+    mean_top2 = mean(trust_schools_binary, na.rm = TRUE),
+    mean_top3 = mean(cut_top3, na.rm = TRUE),
+    .by = STATE
+  ) |>
+  (\(d) tibble(
+    comparison = c("top1 vs top2", "top2 vs top3", "top1 vs top3"),
+    spearman_r = c(
+      cor(d$mean_top1, d$mean_top2, method = "spearman"),
+      cor(d$mean_top2, d$mean_top3, method = "spearman"),
+      cor(d$mean_top1, d$mean_top3, method = "spearman"))
+  ))()
+```
+
+An ordinal cumulative link mixed model (CLMM) is estimated with the same predictors as the main binary model and a state random intercept. The state-level BLUPs from the ordinal model correlate with the binary model BLUPs at 0.92 (Spearman) and 0.93 (Pearson), confirming that the geographic pattern is not sensitive to functional form. The CLMM did not fully converge (max gradient = 0.0019 vs. tolerance = 1e-6), but the coefficients are consistent with the cutpoint-specific binary ones which did. 
+```{r}
+state_blups_ord <- ranef(fit_ordinal)$STATE |>
+  as_tibble(rownames = "STATE") |>
+  rename(blup_ordinal = `(Intercept)`)
+
+state_blups_binary <- ranef(fit_pubsch)$STATE[, , "Intercept"] |>
+  as_tibble(rownames = "STATE") |>
+  select(STATE, blup_binary = Estimate)
+
+state_comparison <- state_blups_binary |>
+  left_join(state_blups_ord, by = "STATE") |>
+  filter(!is.na(blup_ordinal))
+
+cat("Spearman rank correlation (binary BLUP vs ordinal BLUP):",
+    round(cor(state_comparison$blup_binary, state_comparison$blup_ordinal,
+              method = "spearman"), 3), "\n")
+cat("Pearson correlation (binary BLUP vs ordinal BLUP):",
+    round(cor(state_comparison$blup_binary, state_comparison$blup_ordinal), 3), "\n")
+```
+
+Finally, separate binary logistic regressions are estimated at each of the three cutpoints to test the proportional odds assumption. Under proportional odds, the partisan coefficients should be roughly constant across cutpoints.
+```{r}
+map(1:3, \(k) {
+  yougov_df |>
+    mutate( 
+      trust_ord = factor(institutional_trust_public_schools,
+        levels = c("Very little", "Some", "Quite a lot", "A great deal"),
+        ordered = TRUE),
+      y = as.integer(as.numeric(trust_ord) > k)
+    ) |>
+    glm(y ~ sex_mrp + pid3_mrp + age_mrp + educ_mrp + race_mrp,
+        data = _, family = binomial) |>
+    broom::tidy() |>
+    filter(str_detect(term, "pid3_mrp")) |>
+    select(term, estimate, std.error) |>
+    mutate(cutpoint = k)
+}) |>
+  list_rbind()
+```
+
+The Republican coefficient is largest at the bottom of the scale (cutpoint 1: -1.78) and smallest at the top (cutpoint 3: -1.21), with the main specification falling in between (cutpoint 2: -1.42). The proportional odds assumption is violated, meaning Republicans seem to be disproportionately concentrated at "very little" rather than uniformly less trusting. This means the binary cutpoint used in the main analysis, if anything, understates the intensity of the partisan gap.
+
+### F: Trump_z Model Comparison
+```{r trump-z}
+mrp_a <- here("Final", "Trump_Z", "z_full.rds") |> readRDS()
+mrp_b <- here("Final", "Trump_Z", "z_no_state_int.rds") |> readRDS()
+mrp_c <- here("Final", "Trump_Z", "z_no_z.rds") |> readRDS()
+mrp_d <- here("Final", "Trump_Z", "z_only.rds") |> readRDS()
+
+estimates <- mrp_a |>
+  left_join(mrp_b, by = "STATE") |>
+  left_join(mrp_c, by = "STATE") |>
+  left_join(mrp_d, by = "STATE")
+
+tibble(
+  comparison = c("A vs C (drop trump_z)", "A vs D (trump_z only)", "A vs B (drop STATE RE)"),
+  spearman = c(
+    cor(estimates$est_a, estimates$est_c, method = "spearman"),
+    cor(estimates$est_a, estimates$est_d, method = "spearman"),
+    cor(estimates$est_a, estimates$est_b, method = "spearman")) |> round(3),
+  max_shift_pp = c(
+    max(abs(estimates$est_a - estimates$est_c)),
+    max(abs(estimates$est_a - estimates$est_d)),
+    max(abs(estimates$est_a - estimates$est_b))) |> round(3)
+)
+```
+
+Four specifications were compared to assess whether state-level Trump vote share can substitute for state random effects in the institutional comparison-style model. Model A is the full specification. Model B drops the state random intercept but retains state-indexed interactions and trump_z. Model C drops trump_z but retains all state random effects. Model D drops all state-indexed random effects and uses trump_z alone to generate geographic variation.
+Dropping trump_z produces nearly identical estimates (Spearman r = 0.999, max shift = 0.7pp), confirming that it is redundant once state random effects are present. Replacing the state random effects with trump_z alone produces substantially different state rankings (Spearman r = 0.60, max shift = 7.2pp). The modest geographic variation in school trust seems to reflect state-specific factors that a linear function of state partisanship cannot capture.
+
+```{r}
+
+estimates |>
+  pivot_longer(cols = starts_with("est"),
+               names_to = "model", values_to = "estimate",
+               names_prefix = "est_") |>
+  mutate(model = recode(model,
+    "a" = "A: Full",
+    "b" = "B: No STATE RE",
+    "c" = "C: No trump_z",
+    "d" = "D: trump_z only")) |>
+  ggplot(aes(x = estimate, fill = model)) +
+  geom_density(alpha = 0.4) +
+  labs(x = "State-level MRP estimate", fill = "Model",
+       title = "Distribution of state estimates across specifications") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+### G: Posterior Diagnostics
+All brms models converged with Rhat at or below 1.01 across all parameters. Effective sample sizes for regression coefficients exceeded 1000 in all models. Several state-level variance parameters had lower ESS, particularly STATE intercept SDs for police (Bulk_ESS = 326), universities (457), and schools comparison (634), reflecting the difficulty of estimating small variance components. One divergent transition was observed in the universities model out of 4000 post-warmup draws.
+
+- Gallup trust in institutions of other things. Higher ed particularly
+- Zoom in, share a little bit.
+- I will run the regression of that

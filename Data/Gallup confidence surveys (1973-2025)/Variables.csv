@@ -1,0 +1,162 @@
+Name,Type,Label,Description,Value labels
+id,string,Respondent ID,,0
+unique_id,string,,,0
+wtfctr,float,Weight,,
+dataset,float,Data Set ID,,
+yr,integer,Year of Interview,,0
+yrmody,float,"Year, Month and Date of Interview",,
+form_ab,float,Survey Form A or B,,2
+form_cd,float,Survey Form C or D,,2
+language,float,Language of Interview,,2
+timezone,float,Respondent time zone,,7
+cregion,float,Census Region,,4
+region,float,Gallup Region,,4
+state,float,Respondent state of residence,,51
+area,float,Respondent Area Code,,
+fips,float,Respondent FIPS code (County of residence),,
+zipcode,string,Official Zip Code,,0
+popdens,float,Population Density of Respondent County (actual figure),,
+popdens2,float,Population Density Quintile of Respondent County (used in weighting),,2
+urban,float,Type of Place Live,,3
+arealive,float,Description of Area Live In,,8
+arealive_rec,float,Recoded: Area Live In,,4
+type,float,Sample Phone Type,,2
+s1,float,Type of Phone Reached On,,4
+havell,float,Have Landline Phone Use to Make and Receive Personal Calls,,4
+havecell,float,Have Cell Phone Use to Make and Receive Personal Calls,,4
+cellmost,float,Are Most Household Calls Received on Cell Phones,,5
+cellonly,float,Cell Phone Only respondent,,2
+phonstat,float,Telephone Type Status,,4
+phonstatw,float,"Telephone Type Status, for Weighting",,5
+gr,float,gender-respondent,,3
+age,float,Age of Respondent,,
+ager,float,Age Recoded,,4
+age3,float,Age Recoded -- Three Categories,,3
+sexage,float,Age by Gender,,6
+generation,float,,,4
+generation2,float,Generation: Pew Definition,,6
+educ,float,Education,,5
+educr,float,Education recoded,,5
+educnew,float,Education: New Scale,,10
+collgrad,float,College graduate,,3
+college,float,College-Educated,,3
+hisp,float,Hispanic?,,4
+raceban2,float,Detailed Banner on Race/Ethnicity,,6
+race7393,float,Race: 1973-1993 Version (No Hispanic Ethnicity),,6
+raceban1,float,Race as in Banners in Crosstabs,,3
+raceban1_7393,float,Race as in Banners in Crosstabs (No Hispanic Ethnicity),,3
+raceban1_comb,float,Race as in Banner (combined),,3
+raceeduc,float,Education by Race,,5
+racegr,float,Race by Gender,,6
+adults,float,Adults in Household,,4
+party,float,Party Affil,,7
+partyr,float,Party w leaners allocated,,3
+partyrr,float,Party-original question,,3
+ideol,float,Ideology: Initial Question,,7
+ideolr,float,R: Ideology - 5 categories - DK into moderate,,6
+ideolrr,float,Ideology - 3 catetories,,4
+ideol7,float,Seven-category Ideology with Leaners,,8
+pidideol,float,Party ID X Ideology,,7
+register,float,Now registered to vote?,,5
+income,float,Income -- Full Categories,,13
+income03_04,float,Income: 2003-2004 Version,,10
+income90_02,float,Income: 1990-2002 Version,,9
+income79_89,float,Income: 1979-1989 Version,,7
+income_79_87_exp,float,Income: 1979-1987 Version Expanded Categories,,18
+income75_77,float,Income: 1975-1977 Version,,12
+income73,float,Income: 1973 Version,,12
+incr94_now,float,Income Recoded,,6
+inc3_94_now,float,Income Recoded -- Three Categories,,4
+income_tri,float,"Income -- Three Category, By Income Distribution Broken into Thirds",,3
+marital,float,Current Marital Status,,8
+married,float,Marital Status: Married/Not Married,,3
+marrgr,float,Married by Gender,,6
+marital_ss,float,Same-Sex Marriage,,9
+lgbt1,float,LGBT: First Mention,,8
+lgbt2,float,LGBT: Second Mention,,8
+lgbt3,float,LGBT: Third Mention,,8
+lgbt4,float,LGBT: Fourth Mention,,8
+lgbt5,float,LGBT: Fifth Mention,,8
+lgbt_sum,float,Identify as LGBTQ,,4
+employ,float,Current Employment Status,,10
+working,float,Employment Status: Working/Not Working,,2
+employs,float,Spouse Employment Status,,10
+emplgr,float,Employment by Gender,,6
+jobtype,string,Job Description,,7
+ownhome,float,Own or Rent Home,,4
+union,float,Member of Labor Union,,3
+unionhh,float,Union Household,,3
+children,float,Children Under 18,,4
+child18,float,+ 'Children Over 18',,4
+childk12,float,Children in School,,4
+marrchild,float,Married with Children under 18,,2
+military,float,Military Household,,6
+relpref,float,Religious Preference,,9
+relpref2,float,Religious Preference,,9
+religion,float,Respondent Religion,,21
+religion89_90,float,Religion: 1989-1990 Versions,,10
+religion83_87,float,Religion: 1983-1987 Versions,,8
+religion73_81,float,Religion: 1973-1981 Versions,,7
+christian,float,Religion: Christian/Not Christian,,3
+oftnchrc,float,Often attend church,,7
+churchat,float,Church Attendance - Three Categories,,4
+relright,string,Consider Self Member of Religious Right,,4
+bornagn,float,Describe Self as Born-Again or Evangelical,,4
+relimp,float,Religion Important in Life,,4
+chmember,float,Church Member,,3
+attend7,float,Attend Church in Last Seven Days,,3
+presapp,float,Presidential Job Approval,,4
+congapp,float,Congressional Job Approval rating,,4
+sctapp,float,Supreme Court Approval Rating,,4
+sat_us,float,Satisfaction with Way Things Going in US,,4
+mip1,float,Most Important Problem: First Mention,,79
+mip2,float,Most Important Problem: Second Mention,,78
+mip3,float,Most Important Problem: Third Mention,,78
+mipterr,float,Number of Mentions of Terrorism as MIP,,
+mipecon,float,Number of Mentions of Economy as MIP,,
+mipwar,float,Number of Mentions of War in Iraq/Afghanistan as MIP,,
+miphc,float,Number of Mentions of HealthCare as MIP,,
+mipgovt,float,Number of Mentions of Dissatisfaction with Government as MIP,,
+mipmoral,float,Number of Mentions of Moral/Ethical/Family Decline as MIP,,
+findjob,float,Good/Bad Time to Find Quality Job,,4
+econ1,float,Rating of Economic Conditions in this Country,,6
+econ2,float,Economic Conditions Getting Better/Worse,,5
+conf_church,float,Confidence:  Church or Organized Religion,,7
+conf_military,float,Confidence:  The Military,,7
+conf_sup_ct,float,Confidence:  The US Supreme Court,,7
+conf_congress,float,Confidence:  Congress,,7
+conf_presidency,float,Confidence:  The Presidency,,7
+conf_banks,float,Confidence:  Banks,,7
+conf_schools,float,Confidence:  The Public Schools,,7
+conf_newspapers,float,Confidence:  Newspapers,,7
+conf_tv_news,float,Confidence:  Television News,,7
+conf_internet_news,float,Confidence: News on the Internet,,7
+conf_org_labor,float,Confidence:  Organized Labor,,7
+conf_big_business,float,Confidence:  Big Business,,7
+conf_small_business,float,Confidence: Small Business,,7
+conf_police,float,Confidence:  The Police,,7
+conf_justice_sys,float,Confidence: The Criminal Justice System,,7
+conf_med_sys,float,Confidence:  The Medical System,,7
+conf_tech_cos,float,Confidence: Large Technology Companies,,7
+conf_HMOs,float,Confidence- Health Maintenance Organizations,,7
+conf_healthcare_sys,float,Confidence- The Healthcare System,,7
+conf_wall_st,float,Confidence: Wall Street,,7
+conf_power_util,float,Confidence: Electric Power Utilities,,6
+conf_faith_charities,float,Confidence: Faith-based Charitable Organizations,,6
+conf_bus_ind,float,Confidence- Business and Industry,,6
+conf_television,float,Confidence- Television,,6
+conf_savings_loans,float,Confidence- Savings and Loans,,6
+conf_future_us,float,Confidence- Future of the U.S.,,6
+conf_free_enterprise,float,"Confidence- The American Economic System, Free Enterprise",,6
+conf_medicine,float,Confidence- Medicine,,6
+conf_sys_govt,float,Confidence- The U.S. System of Government,,6
+conf_state_govt,float,Confidence- Your State Government,,6
+conf_local_govt,float,Confidence- Your Local or Community Government,,6
+conf_business,float,Confidence- Business,,6
+conf_education,float,Confidence- Education,,6
+conf_science,float,Confidence- Science,,6
+conf_large_cos,float,Confidence- Large Companies,,6
+conf_small_cos,float,Confidence- Small Companies,,6
+conf_your_co,float,Confidence- The Company Your Work For,,6
+conf_comp_ind,float,confidence-computer industry,,6
+conf_higher_ed,float,Confidence: Higher Education,,7

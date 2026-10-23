@@ -1,0 +1,367 @@
+---
+title: "MRP Estimation of State-Level Trust in Public Schools"
+format: pdf
+---
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+here::i_am("MRP/State Level/Public School Trust/StateMRPpublicschools.qmd")
+
+library(here)
+library(tidyverse)
+library(knitr)
+library(usmap)
+library(sf)
+library(ggrepel)
+
+# Load + clean survey data
+yougov_df <- here("Data", "YouGov Surveys", "say-24-baseline-2024-11-21-baseline-6.csv") |> 
+  read_csv() |> 
+  filter(gender4 %in% c(1,2)) |> 
+  mutate(
+    age_mrp = case_when(
+      age4 == 1 ~ "Under 30",
+      age4 == 2 ~ "30-44", 
+      age4 == 3 ~ "45-64",
+      age4 == 4 ~ "65+"),
+    educ_mrp = case_when(
+      educ4 == 1 ~ "HS or less",
+      educ4 == 2 ~ "Some college",
+      educ4 == 3 ~ "College grad",
+      educ4 == 4 ~ "Postgrad"),
+    race_mrp = case_when(
+      hispanic == 1 ~ "Hispanic",
+      race == 1 ~ "White",
+      race == 2 ~ "Black",
+      race == 4 ~ "Asian",
+      TRUE ~ "Other"),
+    sex_mrp = case_when(
+      gender4 == 1 ~ "Man",
+      gender4 == 2 ~ "Woman"),
+    pid3_mrp = case_when(
+      pid3 == 1 ~ "Democrat",
+      pid3 == 2 ~ "Republican",
+      pid3 == 3 ~ "Independent",
+      pid3 %in% c(4, 5) ~ NA_character_), 
+    STATE = sprintf("%02d", inputstate),
+    trust_schools_binary = case_when(
+      institutional_trust_public_schools %in% c(1, 2) ~ 1,  # "A great deal" or "Quite a lot" = Trust
+      institutional_trust_public_schools %in% c(3, 4) ~ 0,  # "Some" or "Very little" = Distrust
+      TRUE ~ NA_real_)) |> 
+  filter(complete.cases(age_mrp, educ_mrp, race_mrp, sex_mrp, pid3_mrp, STATE))
+
+# Load MRP results
+mrp_base <- here("MRP", "State Level", "Public School Trust", "MRP Results", "mrp_base.rds") |> 
+    read_rds()
+mrp_bm <- here("MRP", "State Level", "Public School Trust", "MRP Results", "mrp_pid_bm.rds") |> 
+    read_rds()
+mrp_smfx <- here("MRP", "State Level", "Public School Trust", "MRP Results", "mrp_pid_smfx.rds") |> 
+    read_rds()
+
+# Load MR models
+base_model <- here("MRP", "State Level", "Public School Trust", 
+        "Multilevel Regression", "state_base_mr.rds") |> 
+    read_rds()
+pid_model <- here("MRP", "State Level", "Public School Trust", 
+        "Multilevel Regression", "state_pid_mr.rds")|> 
+    read_rds()
+
+# Load poststratification frames
+frame_base <- here("MRP", "State Level", "Public School Trust", 
+        "Poststratification Frame", "baseline_poststrat.rds") |> 
+    read_rds()
+frame_bm <- here("MRP", "State Level", "Public School Trust", 
+        "Poststratification Frame", "bmlogit_poststrat.rds") |> 
+    read_rds()
+frame_smfx <- here("MRP", "State Level", "Public School Trust", 
+        "Poststratification Frame", "smoothfix_poststrat.rds") |> 
+    read_rds()
+
+weighted_means <- yougov_df |>
+  group_by(STATE) |>
+  summarise(weighted_trust = weighted.mean(trust_schools_binary, weight, na.rm = TRUE), n = n())
+
+state_names <- c(
+  "01"="Alabama", "02"="Alaska", "04"="Arizona", "05"="Arkansas", "06"="California",
+  "08"="Colorado", "09"="Connecticut", "10"="Delaware", "11"="D.C.", "12"="Florida",
+  "13"="Georgia", "15"="Hawaii", "16"="Idaho", "17"="Illinois", "18"="Indiana",
+  "19"="Iowa", "20"="Kansas", "21"="Kentucky", "22"="Louisiana", "23"="Maine",
+  "24"="Maryland", "25"="Massachusetts", "26"="Michigan", "27"="Minnesota", 
+  "28"="Mississippi", "29"="Missouri", "30"="Montana", "31"="Nebraska", "32"="Nevada",
+  "33"="New Hampshire", "34"="New Jersey", "35"="New Mexico", "36"="New York",
+  "37"="North Carolina", "38"="North Dakota", "39"="Ohio", "40"="Oklahoma",
+  "41"="Oregon", "42"="Pennsylvania", "44"="Rhode Island", "45"="South Carolina",
+  "46"="South Dakota", "47"="Tennessee", "48"="Texas", "49"="Utah", "50"="Vermont",
+  "51"="Virginia", "53"="Washington", "54"="West Virginia", "55"="Wisconsin", "56"="Wyoming"
+)
+```
+
+## Overview:
+My goal was to produce state-level estimates of institutional trust in public schools, using MRP to produce (hopefully) better estimates. I built the pipelines from 4 data sources:     
+- The YouGov baseline from 11/21/24 (with n of about 58k for this question)      
+- ACS 2023 (https://www.census.gov/programs-surveys/acs/microdata.html)     
+- CCES Cumulative from 2021-2024 (https://doi.org/10.7910/DVN/II2DB6)      
+- 2024 FEC Presidential Election Results (https://www.fec.gov/introduction-campaign-finance/election-results-and-voting-information/)  
+
+Due to the ACS survey not containing information on party ID, I used a synthetic joint distribution adapted from Shiro Kuriwaki's package (https://github.com/kuriwaki/synthjoint/). As outputs, I produced 3 sets of estimates, a baseline built without party ID from MRP on demographics alone, and then 2 variations with party ID using 2 different synthetic joint distribution methods.
+
+## Results:
+I ran some comparisons between weighted survey mean and MRP, those results are at the bottom of this doc
+
+### Regression:
+Here are the summary tables for the regressions w/ base and pid. 
+
+```{r}
+summary(base_model)
+summary(pid_model)
+```
+
+Essentially, partisanship dominated. Republicans and Independents have massively negative log-odds compared to Democrats. The most major change between the baseline and pid was sex. Without pid, women were about 0, while after controlling for partisanship, they had -0.14 log odds. 
+
+One very interesting thing was that the vote share for Trump had essentially no effect, which suggests that red and blue states don't matter beyond individual party ID. Essentially, this would suggest a Republican in California is as roughly as likely to trust public schools as one in Alabama.
+
+### State estimates:
+#### Table
+```{r}
+#| echo: false
+
+fmt_pm <- function(est, se) {
+  sprintf("%.1f%% ± %.1f", est * 100, (se * 1.96) * 100)
+}
+
+mrp_bm |>
+  select(STATE, bm_est = p_mrp_est, bm_se = p_mrp_se) |>
+  inner_join(mrp_base     |> select(STATE, ba_est = p_mrp_est, ba_se = p_mrp_se), by = "STATE") |>
+  inner_join(weighted_means |> select(STATE, w_est = weighted_trust), by = "STATE") |>
+  mutate(
+    State          = state_names[STATE],
+    `BMLogit (PID)`= fmt_pm(bm_est, bm_se),
+    `Baseline`     = fmt_pm(ba_est, ba_se),
+    `Survey (Raw)` = sprintf("%.1f%%", w_est * 100)
+  ) |>
+  # Reorder: State first, then BMLogit, then Baseline, then Survey
+  select(State, `BMLogit (PID)`, Baseline, `Survey (Raw)`, bm_est) |>
+  arrange(desc(bm_est)) |> 
+  select(-bm_est) |>
+  kable(format = "simple", caption = "Trust in Public Schools: MRP Estimates and Survey Means")
+```
+
+#### Map
+```{r Map}
+#| echo: false
+
+# Claude generated code for map
+
+centroids <- usmapdata::centroid_labels("states") |>
+  mutate(
+    x = st_coordinates(geom)[,1],
+    y = st_coordinates(geom)[,2]
+  ) |>
+  st_drop_geometry()
+
+small_states <- c("09", "10", "11", "24", "25", "33", "34", "44", "50")
+
+label_data <- mrp_bm |>
+  rename(fips = STATE) |>
+  mutate(
+    est = round(p_mrp_est * 100),
+    moe = round(1.96 * p_mrp_se * 100),
+    label = paste0(est, "±", moe),
+    dark = p_mrp_est < 0.33 | p_mrp_est > 0.43
+  ) |>
+  left_join(centroids, by = "fips") |>
+  mutate(small = fips %in% small_states)
+
+range_vals <- range(mrp_bm$p_mrp_est)
+
+plot_usmap(data = mrp_bm |> rename(fips = STATE), values = "p_mrp_est", color = "white", size = 0.25) +
+  # Labels on dark states (white text)
+  geom_text(
+    data = label_data |> filter(!small, dark), 
+    aes(x = x, y = y, label = label), 
+    size = 2.3, fontface = "bold", color = "white"
+  ) +
+  # Labels on light states (dark text with white shadow)
+  geom_text(
+    data = label_data |> filter(!small, !dark), 
+    aes(x = x, y = y, label = label), 
+    size = 2.3, fontface = "bold", color = "gray10"
+  ) +
+  geom_label_repel(
+    data = label_data |> filter(small),
+    aes(x = x, y = y, label = paste0(abbr, ": ", label)),
+    size = 2.2, fontface = "bold",
+    box.padding = 0.3,
+    point.padding = 0.2,
+    segment.color = "gray40",
+    segment.size = 0.4,
+    min.segment.length = 0,
+    force = 5,
+    force_pull = 0.1,
+    nudge_x = 500000,
+    direction = "y",
+    hjust = 0,
+    max.overlaps = 20,
+    fill = "white",
+    label.size = 0.15,
+    alpha = 0.9
+  ) +
+  scale_fill_gradientn(
+    colors = c("#b2182b", "#d6604d", "#f4a582", "#fddbc7", "#d9f0d3", "#a6dba0", "#5aae61", "#1b7837"),
+    labels = scales::percent,
+    name = "Trust",
+    limits = range_vals
+  ) +
+  labs(
+    title = "State-Level Trust in Public Schools",
+    subtitle = "95% CI of percent high trust ('a great deal' or 'quite a lot') (±95% MoE)",
+    caption = "Source: 11/21/2024 YouGov survey (n ≈ 60,000), MRP estimates"
+  ) +
+  theme(
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+    plot.subtitle = element_text(size = 10, hjust = 0.5, color = "gray30"),
+    plot.caption = element_text(size = 8, color = "gray50"),
+    legend.position = "right",
+    legend.key.height = unit(1.2, "cm"),
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.background = element_rect(fill = "white", color = NA)
+  )
+```
+
+## Data: 
+### For institutional trust:
+Trust in public schools binned into high ("A great deal" and "Quite a lot") and low ("Some" and "Very little"), leaving 58,000 respondents. 
+
+### For demographics:
+- standard 4 group age ("Under 30", "30-44", "45-64", "65+")
+- standard 4 group education ("HS or less", "Some college", "College grad", "Postgrad")
+- 5 group race ( "Hispanic", "White", "Black", "Asian", "Other")
+- sex/gender ("Man", "Woman")
+
+### For party ID: 
+- pid3 ("Democrat", "Republican", "Independent") used from YouGov
+- state marginals drawn from CCES pooled across 2021-2024
+
+### State context:
+To differentiate pid3 and stablize across states, I wanted to add a secondary variable at the state level to account for differences in party identification at state level, so I added the z-score of the Trump 2024 vote share.
+
+## Methods:
+### Synthetic joint:
+ACS has no partisanship, so had to use a synthetic joint distribution to poststratify on it. There are a few different ways of doing this, but they tend to either use an outside data source to find marginals or rely solely on the survey itself. To correct for the sampling bias of the YouGov survey, I used weighted CCES with its representative pid category as the marginals.
+
+The two best synthetic joint methods for data of this scale are smoothfix, which rakes the ACS uniformly to hit CCES partisan marginals (which of course assumes independence) and bmlogit, a multinomial model which uses the survey data to learn partisan to demographic relationships and then reweights those to match CCES marginals. I decided to run both and the answer was they were essentially the same w/ r > 0.99, though bmlogit is methodologically cleaner. Here are the correlations at the cell level and in the final mrp results:
+```{r}
+# Cell level
+cor(frame_bm$count, frame_smfx$count)
+
+# Final MRP results
+cor(mrp_bm$p_mrp_est, mrp_smfx$p_mrp_est)
+```
+
+Both were highly correlated with the (no pid) baseline, but not to the same degree.
+```{r}
+# with pid vs. baseline
+cor(mrp_bm$p_mrp_est, mrp_base$p_mrp_est)
+```
+
+### MRP Model:
+I adapted my workflow from Kuriwaki's ccesMRPrun (https://github.com/kuriwaki/ccesMRPrun) and ccesMRPprep (https://github.com/kuriwaki/ccesMRPprep) packages. For my regression formulas, I used:
+
+```{r}
+# baseline
+formula_baseline <- trust_schools_binary ~  sex_mrp + 
+  (1|age_mrp) + (1|educ_mrp) + (1|race_mrp) + (1|STATE) +
+  (1 | STATE:educ_mrp) + (1 | STATE:race_mrp)
+
+# with PID
+formula_partisan <- trust_schools_binary ~  sex_mrp + pid3_mrp + 
+  (1|age_mrp) + (1|educ_mrp) + (1|race_mrp) + (1|STATE) +
+  (1 | STATE:educ_mrp) + (1 | STATE:race_mrp) + trump_z
+```
+
+The size of the YouGov survey allows a couple of state-demographic interactions (so called "deep MRP") wihout overfitting (effective sample size remained fairly large). For the pid version, I used the z-score of Trump’s 2024 vote share to capture potential state-level political party differences not fully accounted for by individual-level partisanship. The model converged fine w/ no divergent transitions and R-hat around 1. 
+
+## Notes:
+I did not include income due to already capturing education, but did run a linear regression on income for university and public school trust and found a somewhat modest negative effect smaller than education and significantly smaller than partisanship which ended up with a lot of bins and complicating the model. 
+
+I could also potentially run the MRP as ordinal over the 1-4 scale, which would be relatively easy to do if there are any notable individual states (though somewhat long and uncooperative over the whole country).
+
+## Validating:
+
+Correlation between weighted survey data and MRP:
+
+```{r}
+cor(mrp_bm$p_mrp_est, weighted_means$weighted_trust)
+```
+
+Shrinkage test, increases as expected with smaller state samples:
+
+```{r}
+validation <- data.frame(
+  STATE = weighted_means$STATE,
+  n = weighted_means$n,
+  diff = mrp_bm$p_mrp_est - weighted_means$weighted_trust)
+
+cor(validation$n, abs(validation$diff))
+```
+
+Comparison plots:
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# MRP vs Weighted Survey Means
+ggplot(mapping = aes(x = weighted_means$weighted_trust, y = mrp_bm$p_mrp_est)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+  geom_point(size = 2.5, alpha = 0.7, color = "#1b7837") +
+  geom_smooth(method = "lm", se = FALSE, color = "#b2182b", linewidth = 0.8) +
+  scale_x_continuous(labels = scales::percent, limits = c(0.25, 0.55)) +
+  scale_y_continuous(labels = scales::percent, limits = c(0.25, 0.55)) +
+  labs(
+    x = "Weighted Survey Mean", 
+    y = "MRP Estimate (bmlogit)",
+    title = "Shrinkage diagnostic: MRP vs Weighted Survey",
+    subtitle = paste0("r = ", round(cor(mrp_bm$p_mrp_est, weighted_means$weighted_trust), 2)),
+    caption = "Dashed line = perfect agreement; red line = linear fit"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 11, color = "gray40"),
+    plot.caption = element_text(size = 8, color = "gray50"),
+    panel.grid.minor = element_blank()
+  )
+
+# Partisan vs Baseline
+ggplot(mapping = aes(x = mrp_base$p_mrp_est, y = mrp_bm$p_mrp_est)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+  geom_point(size = 2.5, alpha = 0.7, color = "#1b7837") +
+  geom_smooth(method = "lm", se = FALSE, color = "#b2182b", linewidth = 0.8) +
+  scale_x_continuous(labels = scales::percent, limits = c(0.28, 0.48)) +
+  scale_y_continuous(labels = scales::percent, limits = c(0.28, 0.48)) +
+  labs(
+    x = "Baseline MRP (Demographics Only)", 
+    y = "Partisan-Adjusted MRP (bmlogit)",
+    title = "Effect of Partisan Adjustment on State Estimates",
+    subtitle = paste0("r = ", round(cor(mrp_bm$p_mrp_est, mrp_base$p_mrp_est), 2)),
+    caption = "Dashed line = no change from partisan adjustment"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 11, color = "gray40"),
+    plot.caption = element_text(size = 8, color = "gray50"),
+    panel.grid.minor = element_blank()
+  )
+```
+
+
+Test for minorities about school integration.
+Okay. Reframe away from a panel and towards individual year or section estimations.
+Ten Thousand Little Democracies
+Maybe incorporate different surveys to identify latent institutional trust dimension
+Data from more surveys might make it feasible

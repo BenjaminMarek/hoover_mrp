@@ -1,0 +1,2 @@
+load("/Users/BenjaminMarek/Desktop/Hoover_Hartney_Project/Survey Data/CCES Surveys/CCES24_HOO_OUTPUT vv.rdata")
+view()

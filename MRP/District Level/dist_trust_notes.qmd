@@ -1,0 +1,72 @@
+---
+title: "District Trust Notes"
+format: html
+---
+Data:
+- ACS district level tables assembled into poststrat frame
+- YouGov data w/ 48k sample size
+- NCES district data
+
+Problem: 
+- Similar to before, except for PID. No way to estimate from CCES convincing PID numbers at district level. However, PID the most important driver on an individual level
+
+Methodology: 
+- Kastellac, Lax, Mallecki, and Phillips (2015). Nested multinomial MRP, modeling unobserved PID variable for poststrat frame, then doing traditional MRP.
+
+Decisions: 
+- YouGov for both models, since CCES lacks school district identifiers. Unfortunate, but kind of necessary
+- Dropped Random Error for the districts for computational reasons
+- Natoinal PUMS seed, standard
+- Note I have a 25+ category in here, which I should fix.
+- Dropped like 1200 districts (mostly not reflected in Democratic vote shares)
+
+Questions:
+- Sherlock cluster
+- L2 voter file data to verify. Maybe better?
+
+Results: 
+Histogram of district estimates (range, distribution)
+Raw survey mean validation (r = 0.69)
+State-level validation (r = 0.80)
+Partisan correlation (r = 0.77)
+
+Regression 1: regress this 50 state trust measure against dummy variable for whether state uses elections or appointments for school board
+Regression 2: same model, plus trump vote share on the right. Will this dummy variable mean anything? Why go to the trouble of creating this measure?
+
+Synthesized key points for expedited communicationBrief summary for the meeting.DoneWhat you did: Two-stage MRP following Kastellec, Lax, and Phillips (2015) to estimate district-level trust in public schools across ~12,150 districts. Partisanship is unobserved in Census data but is the dominant predictor (SD = 1.13), so you fitted an auxiliary categorical model predicting Pr(pid | demographics, district) using dem_plurality_z as the key district-level covariate, expanded the ACS-based 128-cell poststratification frame to 384 cells (× 3 partisan categories), then poststratified the trust model against the expanded frame.
+Validation:
+
+r = 0.69 against raw survey means (203 districts with 30+ respondents)
+r = 0.80 against direct state-level MRP estimates (excl. Vermont)
+r = 0.77 with district-level Democratic vote share
+r = 0.96 between predicted district Dem share and dem_plurality_z (partisanship model working as expected)
+
+Known limitations to flag:
+
+Point estimates only, no credible intervals yet (needs Sherlock for posterior draws)
+Partisanship model uncertainty not yet propagated into trust estimates
+Over-shrinkage compresses between-state variation when aggregating up
+~1,150 small districts dropped for missing covariates
+Both models fitted on same YouGov sample; CES validation at state level as cross-check
+National mean in estimates (~0.33) runs slightly below raw survey mean (0.37)
+
+Next steps to discuss:
+
+Sherlock access for posterior draws and credible intervals
+Adding district RE to partisanship model (computationally expensive, marginal gain likely small)
+L2 voter file as validation of partisan distribution in registration states
+Comparison against TrueViews (your approach is more rigorous: direct district estimation, explicit partisanship handling)
+Run pipeline dropping pid entirely (Option 3) to show how much the partisan correction matters
+
+
+Cross sectionally how does this compare across states. 
+
+- Find how many districts
+
+
+Is this true 10 or 20 years ago? When does this seem to become true?
+- One interesting story is that partisanship changes over time
+- Another story is whether this is true at the cross-sectional
+    - State-level: parental status vs. non-parental status
+
+- Reform movement after nation at risk up to no child left behind up to death of no child left behind. CCES
