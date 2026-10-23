@@ -5,10 +5,11 @@
 # lme4 plug-in point estimates; no uncertainty propagation.
 # Ben Marek | October 2026
 #
+# Calibration variable: 2024 presidential vote (presvote24post, Trump vs Harris),
+# calibrated to state Trump two-party share. PID available for comparison.
 # Two specifications:
 #   "none"       : no partisan predictors
-#   "state_vote" : state 2024 Trump share as predictor (same scaling as trump_z),
-#                  mirroring M&C's use of area vote share alongside calibration
+#   "state_vote" : state 2024 Trump share as predictor (same scaling as trump_z)
 # For each: separate and joint models, rho and beta, cell-level logit-shift
 # calibration, comparison to existing pid3 + trump_z estimates, and a
 # sparse-regime pseudo-ground-truth test.
@@ -21,9 +22,8 @@ suppressPackageStartupMessages({
 set.seed(20261023)
 
 # ---- 0. Config --------------------------------------------------------
-VOTE_VAR   <- NA_character_  # set if a vote-choice item exists (see printed scan)
-TRUMP_VAL  <- NA             # value of VOTE_VAR meaning Trump
-HARRIS_VAL <- NA             # value of VOTE_VAR meaning Harris
+CALIB              <- "vote"   # "vote" (presvote24post) or "pid" (earlier run)
+POST_ELECTION_ONLY <- FALSE    # TRUE drops presvote24post responses fielded on/before Nov 5, 2024
 
 SPECS         <- c("none", "state_vote")
 DROP_DC       <- FALSE
@@ -36,6 +36,7 @@ EDUC_LABELS <- c("HS or less", "Some college", "College grad", "Postgrad")
 RACE_LABELS <- c("White", "Black", "Hispanic", "Asian", "Other")
 SEX_LABELS  <- c("Man", "Woman")
 
+ELECTION_DAY <- as.Date("2024-11-05")
 ctrl    <- glmerControl(optimizer = "bobyqa", calc.derivs = FALSE)
 out_dir <- here("MRP", "State Level", "Public Schools Revised", "calibration_test")
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
@@ -53,6 +54,15 @@ to_fips <- function(x) {
   out[!out %in% fips_tbl$STATE] <- NA
   out
 }
+
+as_chr <- function(x) {
+  if (inherits(x, "haven_labelled")) x <- haven::as_factor(x)
+  as.character(x)
+}
+
+code_vote <- function(x) case_when(x == "Donald Trump"  ~ 1L,
+                                   x == "Kamala Harris" ~ 0L,
+                                   TRUE ~ NA_integer_)  # third party, non-voters dropped
 
 solve_delta <- function(eta, w, target) {
   uniroot(\(d) sum(w * plogis(eta + d)) / sum(w) - target,
@@ -88,30 +98,27 @@ cmp <- function(x, y) c(r = cor(x, y),
                         rmsd_pp = 100 * sqrt(mean((x - y)^2)),
                         mean_diff_pp = 100 * mean(x - y))
 
-rmse <- \(x, y) 100 * sqrt(mean((x - y)^2))
-
+rmse  <- \(x, y) 100 * sqrt(mean((x - y)^2))
 re_st <- function(m) { r <- ranef(m)$STATE; tibble(STATE = rownames(r), u = r[, 1]) }
 
 # ---- 2. Survey --------------------------------------------------------
 yougov_df <- readRDS(here("MRP", "State Level", "Public Schools Revised", "yougov_cleaner_synth.rds"))
 
-cat("\nColumns containing 'vote' (excluding registration):\n")
-print(setdiff(grep("vote", names(yougov_df), ignore.case = TRUE, value = TRUE),
-              c("votereg24", "state_votereg24")))
-
-calib_label <- if (is.na(VOTE_VAR)) "Republican PID" else paste0("2024 vote (", VOTE_VAR, ")")
-if (is.na(VOTE_VAR)) message("Calibrating PID to vote share: construct mismatch; treat calibrated levels as diagnostic.")
+calib_label <- switch(CALIB,
+  vote = if (POST_ELECTION_ONLY) "2024 vote (post-election reports)" else "2024 vote (presvote24post)",
+  pid  = "Republican PID")
 
 svy <- yougov_df |>
   mutate(
-    STATE = to_fips(STATE),
+    STATE      = to_fips(STATE),
     trust_schools_binary = as.integer(trust_schools_binary),
-    repub_binary = if (is.na(VOTE_VAR)) {
+    field_date = as.Date(starttime),
+    vote_raw   = as_chr(presvote24post),
+    vote_post  = code_vote(vote_raw),
+    repub_binary = if (CALIB == "pid") {
       as.integer(as.character(pid3_mrp) == "Republican")
     } else {
-      case_when(.data[[VOTE_VAR]] == TRUMP_VAL  ~ 1L,
-                .data[[VOTE_VAR]] == HARRIS_VAL ~ 0L,
-                TRUE ~ NA_integer_)
+      if_else(!POST_ELECTION_ONLY | field_date > ELECTION_DAY, vote_post, NA_integer_)
     },
     across(c(age_mrp, educ_mrp, race_mrp, sex_mrp), as.character)
   ) |>
@@ -121,6 +128,22 @@ svy <- yougov_df |>
 stopifnot(all(svy$trust_schools_binary %in% c(0L, 1L, NA)),
           all(svy$repub_binary %in% c(0L, 1L, NA)))
 
+cat("\npresvote24post coding check:\n")
+print(table(raw = svy$vote_raw, coded = svy$vote_post, useNA = "ifany"))
+
+cat("\nTiming of Trump/Harris responses in presvote24post:\n")
+svy |>
+  filter(!is.na(vote_post)) |>
+  mutate(timing = case_when(is.na(field_date)           ~ "unknown",
+                            field_date <= ELECTION_DAY  ~ "on/before Nov 5 (intent)",
+                            TRUE                        ~ "after Nov 5 (retrospective)")) |>
+  count(timing) |>
+  mutate(share = round(n / sum(n), 3)) |>
+  print()
+
+cat(sprintf("\nRaw unweighted share = 1 for %s: %.3f (N = %d)\n",
+            calib_label, mean(svy$repub_binary, na.rm = TRUE), sum(!is.na(svy$repub_binary))))
+
 chk <- function(v, labs) {
   got <- sort(unique(svy[[v]]))
   if (!setequal(got, labs)) stop(v, ": survey has [", paste(got, collapse = " | "),
@@ -129,7 +152,7 @@ chk <- function(v, labs) {
 chk("age_mrp", AGE_LABELS); chk("educ_mrp", EDUC_LABELS)
 chk("race_mrp", RACE_LABELS); chk("sex_mrp", SEX_LABELS)
 
-# ---- 3. Poststrat frame (demographics only) --------------------------
+# ---- 3. Poststrat frame (demographics only, all adults) --------------
 frame <- readRDS(here("MRP", "State Level", "pums_2023_acs5_allstates.rds")) |>
   filter(complete.cases(STATE)) |>
   mutate(across(c(AGEP, SCHL, RAC1P, HISP, SEX, PWGTP), \(x) as.numeric(as.character(x)))) |>
@@ -176,9 +199,10 @@ if (DROP_DC) states <- setdiff(states, "11")
 cat("\nStates used:", length(states), "| dropped:",
     paste(setdiff(union(unique(svy$STATE), targets$STATE), states), collapse = ", "), "\n")
 
-vz  <- select(targets, STATE, vote_z)
-tg  <- targets |> filter(STATE %in% states) |> select(STATE, target)
-existing <- filter(existing, STATE %in% states)
+nat_target <- with(filter(targets, STATE %in% states), sum(TRUMP) / sum(TRUMP + HARRIS))
+vz         <- select(targets, STATE, vote_z)
+tg         <- targets |> filter(STATE %in% states) |> select(STATE, target)
+existing   <- filter(existing, STATE %in% states)
 
 fac <- function(d) d |>
   filter(STATE %in% states) |>
@@ -247,8 +271,8 @@ predict_cells_sep <- function(mt, mr, frame) frame |>
 
 # ---- 6. Sparse-regime pseudo-ground-truth test ------------------------
 # Subsample n per state, calibrate to the FULL-SAMPLE calib-variable estimate,
-# score against the FULL-SAMPLE trust estimate (same spec). Removes construct
-# and frame mismatch; isolates whether calibration reduces small-sample error.
+# score against the FULL-SAMPLE trust estimate (same spec). Isolates the
+# variance-reduction channel; by construction it cannot show bias correction.
 run_subsample <- function(use_vote, S_full, st_full) {
   bench     <- select(st_full, STATE, bench_trust = p_trust_unc)
   pseudo_tg <- transmute(st_full, STATE, target = p_repub_unc)
@@ -259,33 +283,33 @@ run_subsample <- function(use_vote, S_full, st_full) {
     m     <- suppressMessages(suppressWarnings(fit_joint(sub, use_vote)))
     S     <- sigma_from(m)
     cells <- predict_cells_joint(m, frame)
-    orc   <- calibrate(cells, S_full$beta, pseudo_tg)                       # oracle beta
+    orc   <- calibrate(cells, S_full$beta, pseudo_tg)                          # oracle beta
     own   <- if (S$sd_r > 1e-3) calibrate(cells, S$beta, pseudo_tg) else NULL  # subsample beta
     b     <- bench$bench_trust[match(orc$STATE, bench$STATE)]
     tibble(n_per_state = n, rho_sub = S$rho, beta_sub = S$beta,
-       sd_t_sub = S$sd_t, sd_r_sub = S$sd_r,
-       state_degenerate = is.nan(S$rho) | S$sd_t < 1e-4 | S$sd_r < 1e-4 | abs(S$rho) > 0.99,
-       rmse_unc        = rmse(orc$p_trust_unc, b),
-       rmse_cal_own    = if (is.null(own)) NA_real_ else rmse(own$p_trust_cal, b),
-       rmse_cal_oracle = rmse(orc$p_trust_cal, b))
+           sd_t_sub = S$sd_t, sd_r_sub = S$sd_r,
+           state_degenerate = is.nan(S$rho) | S$sd_t < 1e-4 | S$sd_r < 1e-4 | abs(S$rho) > 0.99,
+           rmse_unc        = rmse(orc$p_trust_unc, b),
+           rmse_cal_own    = if (is.null(own)) NA_real_ else rmse(own$p_trust_cal, b),
+           rmse_cal_oracle = rmse(orc$p_trust_cal, b))
   }, error = \(e) NULL)
 
-  res <- bind_rows(lapply(rep(SUB_N, each = SUB_REPS), one_rep))
+  raw <- bind_rows(lapply(rep(SUB_N, each = SUB_REPS), one_rep))
+  summ <- raw |>
+    summarise(reps             = n(),
+              share_degenerate = mean(state_degenerate),
+              median_rho_sub   = median(rho_sub, na.rm = TRUE),
+              median_beta_sub  = median(beta_sub, na.rm = TRUE),
+              beta_sub_iqr     = IQR(beta_sub, na.rm = TRUE),
+              rmse_unc         = mean(rmse_unc),
+              rmse_cal_own     = mean(rmse_cal_own, na.rm = TRUE),
+              rmse_cal_oracle  = mean(rmse_cal_oracle),
+              improved_own     = mean(rmse_cal_own < rmse_unc, na.rm = TRUE),
+              improved_oracle  = mean(rmse_cal_oracle < rmse_unc),
+              .by = n_per_state)
   cat("\n--- Sparse-regime test (RMSE in pp vs full-sample benchmark) ---\n")
-  res |>
-  summarise(reps            = n(),
-            share_degenerate = mean(state_degenerate),
-            median_rho_sub  = median(rho_sub, na.rm = TRUE),
-            median_beta_sub = median(beta_sub, na.rm = TRUE),
-            beta_sub_iqr    = IQR(beta_sub, na.rm = TRUE),
-            rmse_unc        = mean(rmse_unc),
-            rmse_cal_own    = mean(rmse_cal_own, na.rm = TRUE),
-            rmse_cal_oracle = mean(rmse_cal_oracle),
-            improved_own    = mean(rmse_cal_own < rmse_unc, na.rm = TRUE),
-            improved_oracle = mean(rmse_cal_oracle < rmse_unc),
-            .by = n_per_state) |>
-  print(width = Inf)
-  res
+  print(summ, width = Inf)
+  list(raw = raw, summary = summ)
 }
 
 # ---- 7. Run one specification ----------------------------------------
@@ -325,10 +349,13 @@ run_spec <- function(spec) {
   cat("\n--- Calibration shifts ---\n")
   with(st, cat(sprintf("Logit shift for %s: mean %.3f, SD %.3f, range [%.3f, %.3f]\n",
                        calib_label, mean(delta_r), sd(delta_r), min(delta_r), max(delta_r))))
-  with(st, cat(sprintf("Pop-weighted mean of state values: model %.3f vs target %.3f\n",
-                       weighted.mean(p_repub_unc, pop), weighted.mean(target, pop))))
-  cat(sprintf("Cross-state r(logit model, logit target) = %.3f\n",
-              with(st, cor(qlogis(p_repub_unc), qlogis(target)))))
+  # Model share is poststratified over ALL adults; target is among voters.
+  # Part of any remaining gap is turnout composition, not survey error.
+  cat(sprintf("National: model (adult-weighted) %.3f | actual Trump two-party share %.3f\n",
+              with(st, weighted.mean(p_repub_unc, pop)), nat_target))
+  cat(sprintf("Cross-state r(logit model, logit target) = %.3f | r(shift, target) = %.3f\n",
+              with(st, cor(qlogis(p_repub_unc), qlogis(target))),
+              with(st, cor(delta_r, target))))
   cat(sprintf("Max |cell-level minus aggregate shortcut| = %.2f pp\n",
               100 * max(abs(st$p_trust_cal - st$p_trust_cal_agg))))
   cat(sprintf("Sanity: r(uncalibrated joint, uncalibrated separate) = %.4f\n",
@@ -371,14 +398,22 @@ summ <- bind_rows(lapply(res, \(r) tibble(
   r_unc_existing  = cor(r$st$p_trust_unc, r$st$p_existing),
   r_cal_existing  = cor(r$st$p_trust_cal, r$st$p_existing),
   rmsd_unc_pp     = rmse(r$st$p_trust_unc, r$st$p_existing),
-  rmsd_cal_pp     = rmse(r$st$p_trust_cal, r$st$p_existing))))
+  rmsd_cal_pp     = rmse(r$st$p_trust_cal, r$st$p_existing),
+  mean_shift_pp   = 100 * mean(r$st$p_trust_cal - r$st$p_trust_unc))))
 
-cat("\n\n================ CROSS-SPEC SUMMARY ================\n")
+cat("\n\n================ CROSS-SPEC SUMMARY (", calib_label, ") ================\n")
 print(mutate(summ, across(where(is.numeric), \(x) round(x, 3))), width = Inf)
 
 if (all(c("none", "state_vote") %in% SPECS)) {
   cat(sprintf("\nr(calibrated 'none', calibrated 'state_vote') = %.3f\n",
               cor(res$none$st$p_trust_cal, res$state_vote$st$p_trust_cal)))
+}
+
+if (RUN_SUBSAMPLE) {
+  cat("\n================ SPARSE-REGIME SUMMARY, ALL SPECS ================\n")
+  bind_rows(lapply(res, \(r) mutate(r$sub$summary, spec = r$spec, .before = 1))) |>
+    mutate(across(where(is.numeric), \(x) round(x, 3))) |>
+    print(width = Inf)
 }
 
 # ---- 9. Plots ---------------------------------------------------------
@@ -408,15 +443,13 @@ p2 <- ggplot(st_all, aes(delta_r, 100 * (p_trust_cal - p_trust_unc), label = abb
   facet_wrap(~ spec, scales = "free", labeller = as_labeller(spec_lab), ncol = 1) +
   labs(x = paste("Logit shift needed for", calib_label),
        y = "Calibrated minus uncalibrated trust (pp)",
-       title = "Calibration adjustment by state",
-       subtitle = "A nonzero mean shift with PID reflects the PID-vote construct gap") +
+       title = "Calibration adjustment by state") +
   theme_minimal(base_size = 10)
 
 p3 <- st_all |>
-  select(spec, abb, p_existing, Uncalibrated = p_trust_unc,
-         Calibrated = p_trust_cal, `Calibrated (centered)` = p_trust_cal_c) |>
+  select(spec, abb, p_existing, Uncalibrated = p_trust_unc, Calibrated = p_trust_cal) |>
   pivot_longer(-c(spec, abb, p_existing), names_to = "version", values_to = "est") |>
-  mutate(version = factor(version, c("Uncalibrated", "Calibrated", "Calibrated (centered)"))) |>
+  mutate(version = factor(version, c("Uncalibrated", "Calibrated"))) |>
   ggplot(aes(p_existing, est, label = abb)) +
   geom_abline(linetype = 2, linewidth = 0.3) +
   geom_text(size = 2) +
@@ -426,11 +459,13 @@ p3 <- st_all |>
        title = "Estimates vs. existing pid3 + trump_z estimates (agreement, not accuracy)") +
   theme_minimal(base_size = 10)
 
-print(p1); print(p2); print(p3)
-ggsave(file.path(out_dir, "p1_state_re.png"),    p1, width = 6.5, height = 8, dpi = 300)
-ggsave(file.path(out_dir, "p2_adjustment.png"),  p2, width = 6.5, height = 8, dpi = 300)
-ggsave(file.path(out_dir, "p3_vs_existing.png"), p3, width = 9,   height = 6.5, dpi = 300)
 
-saveRDS(list(summary = summ,
+print(p1); print(p2); print(p3)
+tag <- paste0("_", CALIB, if (POST_ELECTION_ONLY) "_postonly" else "")
+ggsave(file.path(out_dir, paste0("p1_state_re", tag, ".png")),    p1, width = 6.5, height = 8, dpi = 300)
+ggsave(file.path(out_dir, paste0("p2_adjustment", tag, ".png")),  p2, width = 6.5, height = 8, dpi = 300)
+ggsave(file.path(out_dir, paste0("p3_vs_existing", tag, ".png")), p3, width = 7,   height = 6.5, dpi = 300)
+
+saveRDS(list(calib = calib_label, summary = summ,
              results = lapply(res, \(r) r[c("spec", "blup", "S", "beta_sep", "st", "st_sep", "sub")])),
-        file.path(out_dir, "calibration_test_results.rds"))
+        file.path(out_dir, paste0("calibration_test_results", tag, ".rds")))
