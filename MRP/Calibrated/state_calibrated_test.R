@@ -262,25 +262,29 @@ run_subsample <- function(use_vote, S_full, st_full) {
     orc   <- calibrate(cells, S_full$beta, pseudo_tg)                       # oracle beta
     own   <- if (S$sd_r > 1e-3) calibrate(cells, S$beta, pseudo_tg) else NULL  # subsample beta
     b     <- bench$bench_trust[match(orc$STATE, bench$STATE)]
-    tibble(n_per_state = n, rho_sub = S$rho, singular = S$singular,
-           rmse_unc        = rmse(orc$p_trust_unc, b),
-           rmse_cal_own    = if (is.null(own)) NA_real_ else rmse(own$p_trust_cal, b),
-           rmse_cal_oracle = rmse(orc$p_trust_cal, b))
+    tibble(n_per_state = n, rho_sub = S$rho, beta_sub = S$beta,
+       sd_t_sub = S$sd_t, sd_r_sub = S$sd_r,
+       state_degenerate = is.nan(S$rho) | S$sd_t < 1e-4 | S$sd_r < 1e-4 | abs(S$rho) > 0.99,
+       rmse_unc        = rmse(orc$p_trust_unc, b),
+       rmse_cal_own    = if (is.null(own)) NA_real_ else rmse(own$p_trust_cal, b),
+       rmse_cal_oracle = rmse(orc$p_trust_cal, b))
   }, error = \(e) NULL)
 
   res <- bind_rows(lapply(rep(SUB_N, each = SUB_REPS), one_rep))
   cat("\n--- Sparse-regime test (RMSE in pp vs full-sample benchmark) ---\n")
   res |>
-    summarise(reps            = n(),
-              median_rho_sub  = median(rho_sub),
-              share_singular  = mean(singular),
-              rmse_unc        = mean(rmse_unc),
-              rmse_cal_own    = mean(rmse_cal_own, na.rm = TRUE),
-              rmse_cal_oracle = mean(rmse_cal_oracle),
-              improved_own    = mean(rmse_cal_own < rmse_unc, na.rm = TRUE),
-              improved_oracle = mean(rmse_cal_oracle < rmse_unc),
-              .by = n_per_state) |>
-    print(width = Inf)
+  summarise(reps            = n(),
+            share_degenerate = mean(state_degenerate),
+            median_rho_sub  = median(rho_sub, na.rm = TRUE),
+            median_beta_sub = median(beta_sub, na.rm = TRUE),
+            beta_sub_iqr    = IQR(beta_sub, na.rm = TRUE),
+            rmse_unc        = mean(rmse_unc),
+            rmse_cal_own    = mean(rmse_cal_own, na.rm = TRUE),
+            rmse_cal_oracle = mean(rmse_cal_oracle),
+            improved_own    = mean(rmse_cal_own < rmse_unc, na.rm = TRUE),
+            improved_oracle = mean(rmse_cal_oracle < rmse_unc),
+            .by = n_per_state) |>
+  print(width = Inf)
   res
 }
 
