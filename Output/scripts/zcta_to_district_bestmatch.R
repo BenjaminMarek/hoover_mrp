@@ -55,11 +55,11 @@ library(readxl)
 ## USER INPUT (EXAMPLE VALUES BELOW) ##
 #######################################
 
-survey <- here("Survey Data", "YouGov Surveys", "say-24-baseline-2024-03-20-baseline-2.csv") # file path to survey
-survey_file_type <- "csv" # file type of survey
+survey <- here("Data", "YouGov Surveys", "yougov_all_trust_pubsch.rds") # file path to survey
+survey_file_type <- "rds" # file type of survey
 survey_zip <- "zipcode" # name of survey zipcode/zcta column
 
-crosswalk <- here("Survey Data", "Crosswalks", "geocorr2022_2532801595.csv") # file path to crosswalk
+crosswalk <- here("Data", "Crosswalks", "geocorr2022_2533201713.csv") # file path to crosswalk
 crosswalk_file_type <- "csv" # file type of crosswalk
 crosswalk_zip <- "zcta" # name of crosswalk zipcode/zcta column
 crosswalk_dist <- "sdbest20" # name of target district column
